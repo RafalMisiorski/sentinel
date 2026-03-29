@@ -1,4 +1,4 @@
-"""Monitor Neural Holding via polling /health and /api/jobs?status=failed."""
+"""Generic HTTP monitors: health endpoint and job queue polling."""
 
 from __future__ import annotations
 
@@ -13,15 +13,15 @@ from sentinel.monitors.base import Monitor
 log = logging.getLogger(__name__)
 
 
-class NHHealthMonitor(Monitor):
-    """Polls /health — detects degraded status and queue backlog."""
+class HTTPHealthMonitor(Monitor):
+    """Polls GET /health — works with any backend returning {status, queue_size}."""
 
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None
         self._last_status: str = "ok"
 
     async def setup(self) -> None:
-        self._client = httpx.AsyncClient(base_url=settings.nh_url, timeout=10.0)
+        self._client = httpx.AsyncClient(base_url=settings.backend_url, timeout=10.0)
 
     async def check(self) -> list[SentinelEvent]:
         assert self._client is not None
@@ -31,12 +31,11 @@ class NHHealthMonitor(Monitor):
             resp.raise_for_status()
             data = resp.json()
         except (httpx.HTTPError, ValueError) as exc:
-            # Can't reach NH at all — that's an INTERRUPT
             events.append(
                 SentinelEvent(
                     tier=Tier.INTERRUPT,
-                    source="nh-health",
-                    payload={"summary": f"NH unreachable: {exc}"},
+                    source="health",
+                    payload={"summary": f"Backend unreachable: {exc}"},
                     decay_minutes=10.0,
                 )
             )
@@ -44,40 +43,36 @@ class NHHealthMonitor(Monitor):
 
         status = data.get("status", "unknown")
         queue_size = data.get("queue_size", 0)
-        governor = data.get("governor", "unknown")
 
-        # Status degraded
         if status != "ok":
             events.append(
                 SentinelEvent(
                     tier=Tier.INTERRUPT,
-                    source="nh-health",
+                    source="health",
                     payload={
-                        "summary": f"NH status: {status} (governor={governor})",
+                        "summary": f"Backend status: {status}",
                         "status": status,
-                        "governor": governor,
+                        "raw": data,
                     },
                     decay_minutes=10.0,
                 )
             )
         elif self._last_status != "ok":
-            # Recovery
             events.append(
                 SentinelEvent(
                     tier=Tier.NUDGE,
-                    source="nh-health",
-                    payload={"summary": "NH recovered — status ok"},
+                    source="health",
+                    payload={"summary": "Backend recovered — status ok"},
                 )
             )
 
         self._last_status = status
 
-        # Queue backlog
         if queue_size >= settings.queue_size_warn:
             events.append(
                 SentinelEvent(
                     tier=Tier.INFORM,
-                    source="nh-health",
+                    source="health",
                     payload={
                         "summary": f"Queue backlog: {queue_size} jobs queued",
                         "queue_size": queue_size,
@@ -92,7 +87,7 @@ class NHHealthMonitor(Monitor):
             await self._client.aclose()
 
 
-class NHJobsMonitor(Monitor):
+class JobQueueMonitor(Monitor):
     """Polls /api/jobs?status=failed — detects new job failures."""
 
     def __init__(self) -> None:
@@ -101,7 +96,7 @@ class NHJobsMonitor(Monitor):
         self._first_run: bool = True
 
     async def setup(self) -> None:
-        self._client = httpx.AsyncClient(base_url=settings.nh_url, timeout=10.0)
+        self._client = httpx.AsyncClient(base_url=settings.backend_url, timeout=10.0)
 
     async def check(self) -> list[SentinelEvent]:
         assert self._client is not None
@@ -123,13 +118,13 @@ class NHJobsMonitor(Monitor):
             self._seen_ids.add(job_id)
 
             if self._first_run:
-                continue  # Don't alert on historical failures at startup
+                continue
 
             desc = job.get("description", job.get("type", "unknown"))
             events.append(
                 SentinelEvent(
                     tier=Tier.INFORM,
-                    source="nh-jobs",
+                    source="jobs",
                     payload={
                         "summary": f"Job failed: {desc[:80]}",
                         "job_id": job_id,

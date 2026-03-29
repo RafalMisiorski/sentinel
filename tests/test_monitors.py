@@ -9,15 +9,15 @@ import pytest
 
 from sentinel.core.event import Tier
 from sentinel.monitors.algotrade import AlertsMonitor
-from sentinel.monitors.nh_events import NHHealthMonitor, NHJobsMonitor
+from sentinel.monitors.health import HTTPHealthMonitor, JobQueueMonitor
 
 
-class TestNHHealthMonitor:
+class TestHTTPHealthMonitor:
     @pytest.mark.asyncio
     async def test_healthy_returns_empty(self) -> None:
-        monitor = NHHealthMonitor()
+        monitor = HTTPHealthMonitor()
         mock_resp = MagicMock()
-        mock_resp.json.return_value = {"status": "ok", "queue_size": 3, "governor": "active"}
+        mock_resp.json.return_value = {"status": "ok", "queue_size": 3}
         mock_resp.raise_for_status = MagicMock()
         monitor._client = AsyncMock()
         monitor._client.get.return_value = mock_resp
@@ -27,9 +27,9 @@ class TestNHHealthMonitor:
 
     @pytest.mark.asyncio
     async def test_degraded_status_triggers_interrupt(self) -> None:
-        monitor = NHHealthMonitor()
+        monitor = HTTPHealthMonitor()
         mock_resp = MagicMock()
-        mock_resp.json.return_value = {"status": "degraded", "queue_size": 1, "governor": "paused"}
+        mock_resp.json.return_value = {"status": "degraded", "queue_size": 1}
         mock_resp.raise_for_status = MagicMock()
         monitor._client = AsyncMock()
         monitor._client.get.return_value = mock_resp
@@ -41,7 +41,7 @@ class TestNHHealthMonitor:
 
     @pytest.mark.asyncio
     async def test_unreachable_triggers_interrupt(self) -> None:
-        monitor = NHHealthMonitor()
+        monitor = HTTPHealthMonitor()
         monitor._client = AsyncMock()
         monitor._client.get.side_effect = httpx.ConnectError("refused")
 
@@ -52,9 +52,9 @@ class TestNHHealthMonitor:
 
     @pytest.mark.asyncio
     async def test_queue_backlog_triggers_inform(self) -> None:
-        monitor = NHHealthMonitor()
+        monitor = HTTPHealthMonitor()
         mock_resp = MagicMock()
-        mock_resp.json.return_value = {"status": "ok", "queue_size": 15, "governor": "active"}
+        mock_resp.json.return_value = {"status": "ok", "queue_size": 15}
         mock_resp.raise_for_status = MagicMock()
         monitor._client = AsyncMock()
         monitor._client.get.return_value = mock_resp
@@ -65,10 +65,10 @@ class TestNHHealthMonitor:
         assert "backlog" in events[0].payload["summary"]
 
 
-class TestNHJobsMonitor:
+class TestJobQueueMonitor:
     @pytest.mark.asyncio
     async def test_first_run_baselines(self) -> None:
-        monitor = NHJobsMonitor()
+        monitor = JobQueueMonitor()
         mock_resp = MagicMock()
         mock_resp.json.return_value = [{"id": "job_1", "type": "test", "description": "old fail"}]
         mock_resp.raise_for_status = MagicMock()
@@ -80,7 +80,7 @@ class TestNHJobsMonitor:
 
     @pytest.mark.asyncio
     async def test_new_failure_triggers_inform(self) -> None:
-        monitor = NHJobsMonitor()
+        monitor = JobQueueMonitor()
         monitor._client = AsyncMock()
 
         # First run — baseline

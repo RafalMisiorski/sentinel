@@ -13,7 +13,7 @@ from sentinel.core.cortical_filter import CorticalFilter
 from sentinel.core.event import Decision
 from sentinel.monitors.algotrade import AlertsMonitor
 from sentinel.monitors.base import Monitor
-from sentinel.monitors.nh_events import NHHealthMonitor, NHJobsMonitor
+from sentinel.monitors.health import HTTPHealthMonitor, JobQueueMonitor
 
 log = logging.getLogger(__name__)
 
@@ -56,14 +56,14 @@ async def run() -> None:
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    log.info("Sentinel starting — NH at %s", settings.nh_url)
+    log.info("Sentinel starting — backend at %s", settings.backend_url)
 
     cortical = CorticalFilter()
 
     monitors: list[tuple[Monitor, float]] = [
-        (NHHealthMonitor(), float(settings.health_poll_interval)),
-        (NHJobsMonitor(), float(settings.algotrade_poll_interval)),
-        (AlertsMonitor(), float(settings.algotrade_poll_interval)),
+        (HTTPHealthMonitor(), float(settings.health_poll_interval)),
+        (JobQueueMonitor(), float(settings.poll_interval)),
+        (AlertsMonitor(), float(settings.poll_interval)),
     ]
 
     adapters: list[Adapter] = [TelegramAdapter(), DesktopAdapter()]

@@ -25,7 +25,7 @@ pip install -e ".[dev]"
 ```
 
 ```bash
-export SENTINEL_NH_URL="http://localhost:8100"
+export SENTINEL_BACKEND_URL="http://localhost:8080"
 export SENTINEL_TELEGRAM_BOT_TOKEN="your-token"
 export SENTINEL_TELEGRAM_CHAT_ID="your-chat-id"
 ```
@@ -34,17 +34,26 @@ export SENTINEL_TELEGRAM_CHAT_ID="your-chat-id"
 python -m sentinel
 ```
 
+Your backend needs two endpoints:
+
+| Endpoint | Response shape |
+|----------|---------------|
+| `GET /health` | `{"status": "ok", "queue_size": 3}` |
+| `GET /api/jobs?status=failed` | `[{"id": "...", "description": "..."}]` |
+
+That's it. Sentinel handles scoring, budgeting, and delivery.
+
 ## Architecture
 
 ```
  Monitors                    Core                     Adapters
  ────────                    ────                     ────────
                        ┌─────────────────┐
-  NH /health        ──→│                 │──→ Telegram Bot ──→ Smart Glasses
+  Backend /health   ──→│                 │──→ Telegram Bot ──→ Smart Glasses
                        │ Cortical Filter │
-  NH /api/jobs      ──→│  score & budget │──→ Desktop Notification
+  Backend /api/jobs ──→│  score & budget │──→ Desktop Notification
                        │                 │
-  Newsfeed Alerts   ──→│ PUSH/QUEUE/DROP │──→ [Your Adapter]
+  Alert Feeds       ──→│ PUSH/QUEUE/DROP │──→ [Your Adapter]
                        └────────┬────────┘
                                 │
                        sentinel_state.json
@@ -54,7 +63,7 @@ python -m sentinel
 
 | Tier | Max/Day | When |
 |------|---------|------|
-| **INTERRUPT** | 5 | Drop everything. System down, drawdown breach. |
+| **INTERRUPT** | 5 | Drop everything. System down, critical breach. |
 | **INFORM** | 20 | Worth knowing now. Job failed, queue backlog. |
 | **NUDGE** | 10 | Batch-friendly. Minor alerts, low-priority updates. |
 
@@ -70,8 +79,8 @@ Events decay over time. Stale events drop automatically. Budget resets at midnig
 
 | Monitor | Endpoint | Checks |
 |---------|----------|--------|
-| **NHHealthMonitor** | `GET /health` | Status != ok → INTERRUPT. Queue backlog → INFORM. |
-| **NHJobsMonitor** | `GET /api/jobs?status=failed` | New failures since last poll → INFORM. |
+| **HTTPHealthMonitor** | `GET /health` | Status != ok → INTERRUPT. Queue backlog → INFORM. |
+| **JobQueueMonitor** | `GET /api/jobs?status=failed` | New failures since last poll → INFORM. |
 | **AlertsMonitor** | `GET /api/newsfeed/alerts` | New trigger count deltas → tier by priority. |
 
 Writing a custom monitor:
@@ -100,13 +109,19 @@ sentinel/
 │   ├── cortical_filter.py    # Score → PUSH / QUEUE / DROP
 │   └── attention_budget.py   # Daily limits, midnight reset, persistence
 ├── monitors/
-│   ├── nh_events.py          # NH health + job failure monitors
-│   └── algotrade.py          # Newsfeed alerts monitor
+│   ├── health.py             # HTTPHealthMonitor + JobQueueMonitor
+│   └── algotrade.py          # AlertsMonitor (alert feed polling)
 ├── adapters/
 │   ├── telegram.py           # Telegram Bot API push
 │   └── desktop.py            # Desktop notification (dev/testing)
 └── engine.py                 # asyncio main loop
 ```
+
+## Reference Implementation
+
+Sentinel was built alongside [Neural Holding](https://github.com/RafalMisiorski/Neural_Holding), a personal AI orchestration platform that serves as the reference backend. The shipped monitors are configured for its API shape (`/health`, `/api/jobs`, `/api/newsfeed/alerts`) but work with any service exposing similar endpoints.
+
+See [`INTEGRATION_NH.md`](INTEGRATION_NH.md) for the detailed integration guide including SSE streaming and webhook options.
 
 ## License
 

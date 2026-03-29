@@ -1,4 +1,4 @@
-"""Monitor NH newsfeed alerts — detects critical alert triggers."""
+"""Alert feed monitor — detects new trigger activity from any alert-compatible backend."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ class AlertsMonitor(Monitor):
         self._first_run: bool = True
 
     async def setup(self) -> None:
-        self._client = httpx.AsyncClient(base_url=settings.nh_url, timeout=10.0)
+        self._client = httpx.AsyncClient(base_url=settings.backend_url, timeout=10.0)
 
     async def check(self) -> list[SentinelEvent]:
         assert self._client is not None
@@ -58,7 +58,7 @@ class AlertsMonitor(Monitor):
             self._last_counts[alert_id] = trigger_count
 
             if self._first_run:
-                continue  # Baseline — don't alert on existing counts
+                continue
 
             if trigger_count > prev_count:
                 new_triggers = trigger_count - prev_count
@@ -66,7 +66,7 @@ class AlertsMonitor(Monitor):
                 events.append(
                     SentinelEvent(
                         tier=tier,
-                        source="nh-alerts",
+                        source="alerts",
                         payload={
                             "summary": f"{name}: {new_triggers} new trigger(s) [priority={priority}]",
                             "alert_id": alert_id,

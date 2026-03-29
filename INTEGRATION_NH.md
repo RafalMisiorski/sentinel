@@ -1,5 +1,8 @@
 # Sentinel ↔ Neural Holding Integration Brief
 
+> This document describes integration with the **reference backend** (Neural Holding).
+> For generic setup with any backend, see [README.md](README.md).
+
 **For:** CC instance managing Neural Holding (`D:/Projects/Neural_Holding`)
 **From:** Sentinel project (`~/github/sentinel`)
 **Date:** 2026-03-29
@@ -8,14 +11,14 @@
 
 ## What is Sentinel?
 
-Proactive push-notification engine that watches NH and delivers alerts to smart glasses (Even Realities G2) via Telegram. Repo: `~/github/sentinel`, GitHub: `RafalMisiorski/sentinel`.
+Proactive push-notification engine that watches backends and delivers alerts to smart glasses (Even Realities G2) via Telegram. Neural Holding is the reference backend. Repo: `~/github/sentinel`, GitHub: `RafalMisiorski/sentinel`.
 
 Sentinel is already live and polling these NH endpoints every 30-60s:
 
 | Sentinel Monitor | NH Endpoint | What it checks |
 |---|---|---|
-| `NHHealthMonitor` | `GET /health` | `status != "ok"` → INTERRUPT. `queue_size >= 10` → INFORM |
-| `NHJobsMonitor` | `GET /api/jobs?status=failed&limit=10` | New job IDs since last poll → INFORM |
+| `HTTPHealthMonitor` | `GET /health` | `status != "ok"` → INTERRUPT. `queue_size >= 10` → INFORM |
+| `JobQueueMonitor` | `GET /api/jobs?status=failed&limit=10` | New job IDs since last poll → INFORM |
 | `AlertsMonitor` | `GET /api/newsfeed/alerts` | `trigger_count` delta → tier mapped from `priority` field |
 
 This works but is polling-based. Below are three integration tiers — pick what fits.
