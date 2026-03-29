@@ -14,6 +14,7 @@ from sentinel.core.event import Decision
 from sentinel.monitors.algotrade import AlertsMonitor
 from sentinel.monitors.base import Monitor
 from sentinel.monitors.health import HTTPHealthMonitor, JobQueueMonitor
+from sentinel.monitors.sse import SSEMonitor
 
 log = logging.getLogger(__name__)
 
@@ -60,10 +61,14 @@ async def run() -> None:
 
     cortical = CorticalFilter()
 
+    # SSE is the primary path; polling monitors are fallbacks when SSE is down.
+    sse_monitor = SSEMonitor(
+        fallbacks=[HTTPHealthMonitor(), JobQueueMonitor()],
+    )
+
     monitors: list[tuple[Monitor, float]] = [
-        (HTTPHealthMonitor(), float(settings.health_poll_interval)),
-        (JobQueueMonitor(), float(settings.poll_interval)),
-        (AlertsMonitor(), float(settings.poll_interval)),
+        (sse_monitor, 2.0),       # drain SSE buffer (or poll fallbacks) every 2s
+        (AlertsMonitor(), float(settings.poll_interval)),  # no SSE equivalent yet
     ]
 
     adapters: list[Adapter] = [TelegramAdapter(), DesktopAdapter()]
