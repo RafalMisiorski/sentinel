@@ -8,6 +8,11 @@ import logging
 from sentinel.adapters.base import Adapter
 from sentinel.adapters.desktop import DesktopAdapter
 from sentinel.adapters.telegram import TelegramAdapter
+from sentinel.commands.telegram_handler import (
+    AlertLedger,
+    SnoozeTracker,
+    TelegramCommandHandler,
+)
 from sentinel.config import settings
 from sentinel.core.cortical_filter import CorticalFilter
 from sentinel.core.event import Decision
@@ -24,12 +29,17 @@ async def _poll_loop(
     cortical: CorticalFilter,
     adapters: list[Adapter],
     interval: float,
+    snooze: SnoozeTracker | None = None,
 ) -> None:
     """Repeatedly check a monitor and dispatch events."""
     while True:
         try:
             events = await monitor.check()
             for event in events:
+                if snooze and snooze.is_snoozed(event.source):
+                    log.debug("Snoozed: %s from %s", event.tier.name, event.source)
+                    continue
+
                 decision = cortical.accept(event)
                 log.info(
                     "%s | %s | %s | score=%.2f | %s",
@@ -60,6 +70,8 @@ async def run() -> None:
     log.info("Sentinel starting — backend at %s", settings.backend_url)
 
     cortical = CorticalFilter()
+    ledger = AlertLedger()
+    snooze = SnoozeTracker()
 
     # SSE is the primary path; polling monitors are fallbacks when SSE is down.
     sse_monitor = SSEMonitor(
@@ -67,34 +79,47 @@ async def run() -> None:
     )
 
     monitors: list[tuple[Monitor, float]] = [
-        (sse_monitor, 2.0),       # drain SSE buffer (or poll fallbacks) every 2s
-        (AlertsMonitor(), float(settings.poll_interval)),  # no SSE equivalent yet
+        (sse_monitor, 2.0),
+        (AlertsMonitor(), float(settings.poll_interval)),
     ]
 
-    adapters: list[Adapter] = [TelegramAdapter(), DesktopAdapter()]
+    adapters: list[Adapter] = [
+        TelegramAdapter(ledger=ledger),
+        DesktopAdapter(),
+    ]
+
+    # Command handler shares ledger, budget, and snooze tracker
+    cmd_handler = TelegramCommandHandler(
+        ledger=ledger,
+        budget=cortical.budget,
+        snooze_tracker=snooze,
+    )
 
     # Setup phase
     for adapter in adapters:
         await adapter.setup()
     for monitor, _ in monitors:
         await monitor.setup()
+    await cmd_handler.setup()
 
     tg_status = "configured" if settings.telegram_bot_token else "NOT configured"
     log.info(
-        "Running %d monitors, %d adapters (Telegram: %s)",
-        len(monitors), len(adapters), tg_status,
+        "Running %d monitors, %d adapters, commands=%s (Telegram: %s)",
+        len(monitors), len(adapters), "on" if settings.telegram_bot_token else "off", tg_status,
     )
 
     tasks = [
-        asyncio.create_task(_poll_loop(m, cortical, adapters, interval))
+        asyncio.create_task(_poll_loop(m, cortical, adapters, interval, snooze))
         for m, interval in monitors
     ]
+    tasks.append(asyncio.create_task(cmd_handler.poll_loop()))
 
     try:
         await asyncio.gather(*tasks)
     except asyncio.CancelledError:
         pass
     finally:
+        await cmd_handler.teardown()
         for monitor, _ in monitors:
             await monitor.teardown()
         for adapter in adapters:
